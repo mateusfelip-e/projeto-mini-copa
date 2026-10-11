@@ -49,6 +49,8 @@ const roundLabels = {
   final: 'Grande final',
 }
 
+type Team = TournamentState['teams'][number]
+
 type PlayerDraft = {
   id: string
   playerName: string
@@ -62,6 +64,18 @@ type RegistrationDraft = {
   matchId: string
   homeScore: number
   awayScore: number
+}
+
+type TeamDraft = {
+  name: string
+  flag: string
+  owner: string
+  color: string
+}
+
+type MatchTeamsDraft = {
+  homeTeamId: string
+  awayTeamId: string
 }
 
 type PlayerPerformanceWithCompetitor = PlayerPerformance & {
@@ -166,6 +180,15 @@ function App() {
   const [editingDraftId, setEditingDraftId] = useState<string | null>(null)
   const [penaltyWinnerId, setPenaltyWinnerId] = useState('')
 
+  // ── Edição de seleções ──
+  const [editingTeamId, setEditingTeamId] = useState<string | null>(null)
+  const [teamDraft, setTeamDraft] = useState<TeamDraft | null>(null)
+
+  // ── Edição de confrontos ──
+  const [editingMatchId, setEditingMatchId] = useState<string | null>(null)
+  const [matchTeamsDraft, setMatchTeamsDraft] =
+    useState<MatchTeamsDraft | null>(null)
+
   // ── Carregamento inicial a partir da nuvem ──
   useEffect(() => {
     let cancelled = false
@@ -179,8 +202,6 @@ function App() {
         if (cloudTournament) {
           setTournament(cloudTournament)
         } else {
-          // Ainda não existe uma Copa na nuvem.
-          // Mantém os dados locais para a próxima etapa.
           console.info('Nenhum campeonato encontrado na nuvem.')
         }
       } catch (error) {
@@ -255,6 +276,145 @@ function App() {
     setPlayerDrafts([])
     setPenaltyWinnerId('')
     resetPlayerForm()
+  }
+
+  // ── Edição de seleções ──
+  function openTeamEditor(team: Team) {
+    setEditingTeamId(team.id)
+    setTeamDraft({
+      name: team.name,
+      flag: team.flag,
+      owner: team.owner,
+      color: team.color,
+    })
+  }
+
+  function closeTeamEditor() {
+    setEditingTeamId(null)
+    setTeamDraft(null)
+  }
+
+  function saveTeamEdit() {
+    if (!editingTeamId || !teamDraft) return
+
+    const name = teamDraft.name.trim()
+    const flag = teamDraft.flag.trim()
+    const owner = teamDraft.owner.trim()
+    const color = teamDraft.color.trim()
+
+    if (!name) {
+      alert('Informe o nome da seleção.')
+      return
+    }
+
+    if (!flag) {
+      alert('Informe a bandeira (emoji).')
+      return
+    }
+
+    if (!owner) {
+      alert('Informe o competidor responsável.')
+      return
+    }
+
+    if (!/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(color)) {
+      alert('Informe uma cor em formato hexadecimal (ex.: #22c55e).')
+      return
+    }
+
+    setTournament((current) => {
+      const target = current.teams.find(
+        (team) => team.id === editingTeamId,
+      )
+
+      if (!target) return current
+
+      const patch = {
+        name,
+        flag,
+        owner: owner as typeof target.owner,
+        color: color as typeof target.color,
+      }
+
+      return {
+        ...current,
+        teams: current.teams.map((team) =>
+          team.id === editingTeamId ? { ...team, ...patch } : team,
+        ),
+        matches: current.matches.map((match) => ({
+          ...match,
+          home:
+            match.home && match.home.id === editingTeamId
+              ? ({ ...match.home, ...patch } as typeof match.home)
+              : match.home,
+          away:
+            match.away && match.away.id === editingTeamId
+              ? ({ ...match.away, ...patch } as typeof match.away)
+              : match.away,
+        })),
+      }
+    })
+
+    closeTeamEditor()
+  }
+
+  // ── Edição de confrontos ──
+  function openMatchEditor(match: Match) {
+    setEditingMatchId(match.id)
+    setMatchTeamsDraft({
+      homeTeamId: match.home?.id ?? '',
+      awayTeamId: match.away?.id ?? '',
+    })
+  }
+
+  function closeMatchEditor() {
+    setEditingMatchId(null)
+    setMatchTeamsDraft(null)
+  }
+
+  function saveMatchEdit() {
+    if (!editingMatchId || !matchTeamsDraft) return
+
+    const { homeTeamId, awayTeamId } = matchTeamsDraft
+
+    if (homeTeamId && awayTeamId && homeTeamId === awayTeamId) {
+      alert('Escolha seleções diferentes para mandante e visitante.')
+      return
+    }
+
+    setTournament((current) => ({
+      ...current,
+      matches: current.matches.map((match) => {
+        if (match.id !== editingMatchId) return match
+
+        const home = homeTeamId
+          ? current.teams.find((t) => t.id === homeTeamId) ?? null
+          : null
+
+        const away = awayTeamId
+          ? current.teams.find((t) => t.id === awayTeamId) ?? null
+          : null
+
+        const winnerStillValid =
+          match.winnerId != null &&
+          (match.winnerId === home?.id ||
+            match.winnerId === away?.id)
+
+        return {
+          ...match,
+          home,
+          away,
+          // Match.winnerId é `string | null` — usamos `null` (não
+          // `undefined`) quando o vencedor não é mais válido.
+          winnerId:
+            winnerStillValid && match.winnerId !== null
+              ? match.winnerId
+              : null,
+        }
+      }),
+    }))
+
+    closeMatchEditor()
   }
 
   function registerResult(id: string) {
@@ -449,7 +609,6 @@ function App() {
     )
 
     // Só exige jogadores das seleções que efetivamente marcaram gols.
-    // Se a seleção fez 0 gols, não é necessário cadastrar ninguém dela.
     if (registration.homeScore > 0 && homePlayers.length === 0) {
       alert(
         `Cadastre pelo menos um jogador de ${match.home.name} que tenha marcado gol.`,
@@ -660,21 +819,34 @@ function App() {
             </span>
           </div>
 
-          <span
-            className={`rounded-full px-3 py-1.5 text-xs font-medium ${
-              isCompleted
-                ? 'border border-amber-400/20 bg-amber-400/10 text-amber-300'
+          <div className="flex items-center gap-2">
+            {!isCompleted && (
+              <button
+                onClick={() => openMatchEditor(match)}
+                aria-label={`Editar confronto ${match.id}`}
+                title="Editar confronto"
+                className="rounded-lg border border-white/10 p-1.5 text-zinc-500 transition hover:border-amber-400/30 hover:text-amber-300"
+              >
+                <Pencil size={13} />
+              </button>
+            )}
+
+            <span
+              className={`rounded-full px-3 py-1.5 text-xs font-medium ${
+                isCompleted
+                  ? 'border border-amber-400/20 bg-amber-400/10 text-amber-300'
+                  : home && away
+                    ? 'border border-white/10 bg-white/[0.03] text-zinc-400'
+                    : 'border border-white/5 bg-black/30 text-zinc-600'
+              }`}
+            >
+              {isCompleted
+                ? 'Concluída'
                 : home && away
-                  ? 'border border-white/10 bg-white/[0.03] text-zinc-400'
-                  : 'border border-white/5 bg-black/30 text-zinc-600'
-            }`}
-          >
-            {isCompleted
-              ? 'Concluída'
-              : home && away
-                ? 'Aguardando resultado'
-                : 'Aguardando classificados'}
-          </span>
+                  ? 'Aguardando resultado'
+                  : 'Aguardando classificados'}
+            </span>
+          </div>
         </div>
 
         <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-3">
@@ -820,6 +992,28 @@ function App() {
         (match) => match.id === registration.matchId,
       )
     : undefined
+
+  const editingTeam = editingTeamId
+    ? tournament.teams.find((team) => team.id === editingTeamId)
+    : undefined
+
+  const editingMatch = editingMatchId
+    ? tournament.matches.find((match) => match.id === editingMatchId)
+    : undefined
+
+  const matchEditorHomeTeam =
+    editingMatch && matchTeamsDraft?.homeTeamId
+      ? tournament.teams.find(
+          (team) => team.id === matchTeamsDraft.homeTeamId,
+        )
+      : undefined
+
+  const matchEditorAwayTeam =
+    editingMatch && matchTeamsDraft?.awayTeamId
+      ? tournament.teams.find(
+          (team) => team.id === matchTeamsDraft.awayTeamId,
+        )
+      : undefined
 
   return (
     <div className="min-h-screen bg-[#09090b] text-zinc-100">
@@ -1008,18 +1202,21 @@ function App() {
             )}
 
             <section className="mt-12 pb-8">
-              <div className="mb-6">
-                <p className="text-xs font-bold tracking-[0.2em] text-amber-400">
-                  PARTICIPANTES
-                </p>
+              <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
+                <div>
+                  <p className="text-xs font-bold tracking-[0.2em] text-amber-400">
+                    PARTICIPANTES
+                  </p>
 
-                <h3 className="mt-2 text-xl font-semibold">
-                  Seleções participantes
-                </h3>
+                  <h3 className="mt-2 text-xl font-semibold">
+                    Seleções participantes
+                  </h3>
 
-                <p className="mt-2 text-sm text-zinc-500">
-                  Quatro seleções para cada competidor.
-                </p>
+                  <p className="mt-2 text-sm text-zinc-500">
+                    Quatro seleções para cada competidor. Toque no ícone de
+                    lápis para editar nome, bandeira, competidor e cor.
+                  </p>
+                </div>
               </div>
 
               <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -1028,18 +1225,28 @@ function App() {
                     key={team.id}
                     className="rounded-2xl border border-white/10 bg-[#111113] p-5 transition hover:-translate-y-1 hover:border-amber-400/25"
                   >
-                    <div className="flex items-center justify-between">
+                    <div className="flex items-center justify-between gap-2">
                       <span className="text-3xl">{team.flag}</span>
 
-                      <span
-                        className="rounded-full px-3 py-1 text-xs font-medium"
-                        style={{
-                          color: team.color,
-                          backgroundColor: `${team.color}15`,
-                        }}
-                      >
-                        {team.owner}
-                      </span>
+                      <div className="flex items-center gap-2">
+                        <span
+                          className="rounded-full px-3 py-1 text-xs font-medium"
+                          style={{
+                            color: team.color,
+                            backgroundColor: `${team.color}15`,
+                          }}
+                        >
+                          {team.owner}
+                        </span>
+
+                        <button
+                          onClick={() => openTeamEditor(team)}
+                          aria-label={`Editar ${team.name}`}
+                          className="rounded-lg border border-white/10 p-1.5 text-zinc-500 transition hover:border-amber-400/30 hover:text-amber-300"
+                        >
+                          <Pencil size={13} />
+                        </button>
+                      </div>
                     </div>
 
                     <h4 className="mt-5 font-semibold">{team.name}</h4>
@@ -1892,6 +2099,14 @@ function App() {
                 </button>
 
                 <button
+                  onClick={() => setActiveTab('Visão geral')}
+                  className="flex items-center justify-center gap-2 rounded-xl border border-white/10 px-5 py-3 text-sm text-zinc-300 transition hover:border-amber-400/25 hover:bg-white/[0.03]"
+                >
+                  <Pencil size={17} />
+                  Editar seleções
+                </button>
+
+                <button
                   onClick={() => setActiveTab('Histórico')}
                   className="flex items-center justify-center gap-2 rounded-xl border border-white/10 px-5 py-3 text-sm text-zinc-300 transition hover:border-amber-400/25 hover:bg-white/[0.03]"
                 >
@@ -1989,6 +2204,323 @@ function App() {
           UMA COMPETIÇÃO ENTRE AMIGOS
         </footer>
       </main>
+
+      {/* ── Modal: Editar seleção ── */}
+      {editingTeamId && teamDraft && editingTeam && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-3 backdrop-blur-sm sm:p-6">
+          <div className="max-h-[94vh] w-full max-w-lg overflow-y-auto rounded-3xl border border-white/10 bg-[#111113] shadow-2xl shadow-black/50">
+            <div className="sticky top-0 z-10 border-b border-white/10 bg-[#111113]/95 p-5 backdrop-blur sm:p-7">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <p className="text-xs font-bold tracking-[0.2em] text-amber-400">
+                    MINI-COPA · EDITAR SELEÇÃO
+                  </p>
+
+                  <h3 className="mt-2 text-xl font-bold sm:text-2xl">
+                    Editar seleção
+                  </h3>
+
+                  <p className="mt-2 text-sm text-zinc-500">
+                    Atualize os dados da seleção. As partidas em que ela
+                    aparece também serão atualizadas automaticamente.
+                  </p>
+                </div>
+
+                <button
+                  onClick={closeTeamEditor}
+                  aria-label="Fechar formulário"
+                  className="rounded-xl border border-white/10 p-2.5 text-zinc-400 transition hover:border-white/20 hover:bg-white/5 hover:text-white"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+            </div>
+
+            <div className="space-y-5 p-5 sm:p-7">
+              <div
+                className="flex items-center gap-4 rounded-2xl border p-4"
+                style={{
+                  borderColor: `${teamDraft.color || '#22c55e'}40`,
+                  backgroundColor: `${teamDraft.color || '#22c55e'}10`,
+                }}
+              >
+                <span className="text-4xl">{teamDraft.flag || '🏳️'}</span>
+
+                <div className="min-w-0">
+                  <p className="truncate text-base font-semibold">
+                    {teamDraft.name || 'Sem nome'}
+                  </p>
+
+                  <p className="mt-1 text-xs text-zinc-400">
+                    {teamDraft.owner || 'Sem competidor'}
+                  </p>
+                </div>
+              </div>
+
+              <label className="block">
+                <span className="mb-2 block text-xs font-medium text-zinc-400">
+                  Nome da seleção
+                </span>
+
+                <input
+                  autoFocus
+                  type="text"
+                  value={teamDraft.name}
+                  onChange={(event) =>
+                    setTeamDraft({
+                      ...teamDraft,
+                      name: event.target.value,
+                    })
+                  }
+                  placeholder="Ex.: Brasil"
+                  className="w-full rounded-xl border border-white/10 bg-black/30 px-4 py-3 text-sm text-white outline-none transition placeholder:text-zinc-600 focus:border-amber-400/50"
+                />
+              </label>
+
+              <label className="block">
+                <span className="mb-2 block text-xs font-medium text-zinc-400">
+                  Bandeira (emoji)
+                </span>
+
+                <input
+                  type="text"
+                  value={teamDraft.flag}
+                  onChange={(event) =>
+                    setTeamDraft({
+                      ...teamDraft,
+                      flag: event.target.value,
+                    })
+                  }
+                  placeholder="Ex.: 🇧🇷"
+                  maxLength={4}
+                  className="w-full rounded-xl border border-white/10 bg-black/30 px-4 py-3 text-sm text-white outline-none transition placeholder:text-zinc-600 focus:border-amber-400/50"
+                />
+
+                <span className="mt-2 block text-xs text-zinc-500">
+                  Dica: use um emoji de bandeira (⌘ + Ctrl + Espaço no Mac
+                  ou Win + . no Windows).
+                </span>
+              </label>
+
+              <label className="block">
+                <span className="mb-2 block text-xs font-medium text-zinc-400">
+                  Competidor responsável
+                </span>
+
+                <input
+                  type="text"
+                  value={teamDraft.owner}
+                  onChange={(event) =>
+                    setTeamDraft({
+                      ...teamDraft,
+                      owner: event.target.value,
+                    })
+                  }
+                  placeholder="Ex.: Mateus ou Lucas"
+                  className="w-full rounded-xl border border-white/10 bg-black/30 px-4 py-3 text-sm text-white outline-none transition placeholder:text-zinc-600 focus:border-amber-400/50"
+                />
+              </label>
+
+              <div>
+                <span className="mb-2 block text-xs font-medium text-zinc-400">
+                  Cor de destaque
+                </span>
+
+                <div className="flex items-center gap-3">
+                  <input
+                    type="color"
+                    value={
+                      /^#[0-9a-fA-F]{6}$/.test(teamDraft.color)
+                        ? teamDraft.color
+                        : '#22c55e'
+                    }
+                    onChange={(event) =>
+                      setTeamDraft({
+                        ...teamDraft,
+                        color: event.target.value,
+                      })
+                    }
+                    className="h-11 w-14 cursor-pointer rounded-lg border border-white/10 bg-black/30 p-1"
+                  />
+
+                  <input
+                    type="text"
+                    value={teamDraft.color}
+                    onChange={(event) =>
+                      setTeamDraft({
+                        ...teamDraft,
+                        color: event.target.value,
+                      })
+                    }
+                    placeholder="#22c55e"
+                    className="flex-1 rounded-xl border border-white/10 bg-black/30 px-4 py-3 font-mono text-sm text-white outline-none transition placeholder:text-zinc-600 focus:border-amber-400/50"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="flex flex-col-reverse gap-3 border-t border-white/10 p-5 sm:flex-row sm:justify-end sm:p-7">
+              <button
+                onClick={closeTeamEditor}
+                className="rounded-xl border border-white/10 px-5 py-3 text-sm font-medium text-zinc-300 transition hover:bg-white/[0.04]"
+              >
+                Cancelar
+              </button>
+
+              <button
+                onClick={saveTeamEdit}
+                className="flex items-center justify-center gap-2 rounded-xl bg-amber-400 px-5 py-3 text-sm font-bold text-black transition hover:bg-amber-300"
+              >
+                <Check size={17} />
+                Salvar alterações
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Modal: Editar confronto ── */}
+      {editingMatchId && matchTeamsDraft && editingMatch && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-3 backdrop-blur-sm sm:p-6">
+          <div className="max-h-[94vh] w-full max-w-lg overflow-y-auto rounded-3xl border border-white/10 bg-[#111113] shadow-2xl shadow-black/50">
+            <div className="sticky top-0 z-10 border-b border-white/10 bg-[#111113]/95 p-5 backdrop-blur sm:p-7">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <p className="text-xs font-bold tracking-[0.2em] text-amber-400">
+                    MINI-COPA · {editingMatch.id}
+                  </p>
+
+                  <h3 className="mt-2 text-xl font-bold sm:text-2xl">
+                    Editar confronto
+                  </h3>
+
+                  <p className="mt-2 text-sm text-zinc-500">
+                    Escolha manualmente as seleções que vão disputar esta
+                    partida. Deixe em branco para "A definir".
+                  </p>
+                </div>
+
+                <button
+                  onClick={closeMatchEditor}
+                  aria-label="Fechar formulário"
+                  className="rounded-xl border border-white/10 p-2.5 text-zinc-400 transition hover:border-white/20 hover:bg-white/5 hover:text-white"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+            </div>
+
+            <div className="space-y-5 p-5 sm:p-7">
+              <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3 rounded-2xl border border-white/[0.06] bg-black/30 p-4">
+                <div className="min-w-0 text-center">
+                  <span className="text-3xl sm:text-4xl">
+                    {matchEditorHomeTeam?.flag ?? '🏳️'}
+                  </span>
+
+                  <p className="mt-2 truncate text-sm font-semibold">
+                    {matchEditorHomeTeam?.name ?? 'A definir'}
+                  </p>
+
+                  <p className="mt-1 text-xs text-zinc-500">
+                    {matchEditorHomeTeam?.owner ?? '—'}
+                  </p>
+                </div>
+
+                <span className="text-zinc-600">×</span>
+
+                <div className="min-w-0 text-center">
+                  <span className="text-3xl sm:text-4xl">
+                    {matchEditorAwayTeam?.flag ?? '🏳️'}
+                  </span>
+
+                  <p className="mt-2 truncate text-sm font-semibold">
+                    {matchEditorAwayTeam?.name ?? 'A definir'}
+                  </p>
+
+                  <p className="mt-1 text-xs text-zinc-500">
+                    {matchEditorAwayTeam?.owner ?? '—'}
+                  </p>
+                </div>
+              </div>
+
+              <label className="block">
+                <span className="mb-2 block text-xs font-medium text-zinc-400">
+                  Seleção mandante
+                </span>
+
+                <select
+                  autoFocus
+                  value={matchTeamsDraft.homeTeamId}
+                  onChange={(event) =>
+                    setMatchTeamsDraft({
+                      ...matchTeamsDraft,
+                      homeTeamId: event.target.value,
+                    })
+                  }
+                  className="w-full appearance-none rounded-xl border border-white/10 bg-[#09090b] px-4 py-3 text-sm text-white outline-none transition focus:border-amber-400/50"
+                >
+                  <option value="">A definir</option>
+
+                  {tournament.teams.map((team) => (
+                    <option key={team.id} value={team.id}>
+                      {team.flag} {team.name} · {team.owner}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="block">
+                <span className="mb-2 block text-xs font-medium text-zinc-400">
+                  Seleção visitante
+                </span>
+
+                <select
+                  value={matchTeamsDraft.awayTeamId}
+                  onChange={(event) =>
+                    setMatchTeamsDraft({
+                      ...matchTeamsDraft,
+                      awayTeamId: event.target.value,
+                    })
+                  }
+                  className="w-full appearance-none rounded-xl border border-white/10 bg-[#09090b] px-4 py-3 text-sm text-white outline-none transition focus:border-amber-400/50"
+                >
+                  <option value="">A definir</option>
+
+                  {tournament.teams.map((team) => (
+                    <option key={team.id} value={team.id}>
+                      {team.flag} {team.name} · {team.owner}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <p className="rounded-xl border border-white/[0.06] bg-black/20 p-4 text-xs leading-5 text-zinc-500">
+                Dica: você pode trocar as seleções manualmente para
+                corrigir classificações ou simular confrontos. Se o
+                vencedor anterior não estiver mais na partida, a
+                classificação será limpa.
+              </p>
+            </div>
+
+            <div className="flex flex-col-reverse gap-3 border-t border-white/10 p-5 sm:flex-row sm:justify-end sm:p-7">
+              <button
+                onClick={closeMatchEditor}
+                className="rounded-xl border border-white/10 px-5 py-3 text-sm font-medium text-zinc-300 transition hover:bg-white/[0.04]"
+              >
+                Cancelar
+              </button>
+
+              <button
+                onClick={saveMatchEdit}
+                className="flex items-center justify-center gap-2 rounded-xl bg-amber-400 px-5 py-3 text-sm font-bold text-black transition hover:bg-amber-300"
+              >
+                <Check size={17} />
+                Salvar confronto
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {registration && registrationMatch?.home && registrationMatch.away && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-3 backdrop-blur-sm sm:p-6">
