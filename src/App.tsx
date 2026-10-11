@@ -448,9 +448,18 @@ function App() {
       (player) => player.teamId === match.away?.id,
     )
 
-    if (homePlayers.length === 0 || awayPlayers.length === 0) {
+    // Só exige jogadores das seleções que efetivamente marcaram gols.
+    // Se a seleção fez 0 gols, não é necessário cadastrar ninguém dela.
+    if (registration.homeScore > 0 && homePlayers.length === 0) {
       alert(
-        'Cadastre pelo menos um jogador para cada seleção antes de salvar.',
+        `Cadastre pelo menos um jogador de ${match.home.name} que tenha marcado gol.`,
+      )
+      return
+    }
+
+    if (registration.awayScore > 0 && awayPlayers.length === 0) {
+      alert(
+        `Cadastre pelo menos um jogador de ${match.away.name} que tenha marcado gol.`,
       )
       return
     }
@@ -2282,8 +2291,9 @@ function App() {
                     </p>
 
                     <p className="mt-2 text-xs leading-5 text-zinc-500">
-                      Adicione os jogadores das duas seleções, incluindo
-                      aqueles que não marcaram gols.
+                      Adicione pelo menos um jogador para cada seleção que
+                      marcou gol. Seleções com 0 gols podem ficar sem
+                      estatísticas individuais.
                     </p>
                   </div>
                 ) : (
@@ -2340,7 +2350,9 @@ function App() {
 
                             {teamPlayers.length === 0 ? (
                               <p className="p-4 text-xs text-zinc-500">
-                                Nenhum jogador cadastrado para esta seleção.
+                                {expectedGoals === 0
+                                  ? 'Nenhum jogador cadastrado (esta seleção não marcou gols).'
+                                  : 'Nenhum jogador cadastrado para esta seleção.'}
                               </p>
                             ) : (
                               <div className="divide-y divide-white/[0.05]">
